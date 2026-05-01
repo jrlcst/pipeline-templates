@@ -19,9 +19,15 @@ Estes secrets devem ser configurados no repositório consumidor e repassados ao 
 
 ## Variáveis e secrets para criar no GitHub
 
-No modelo atual, voce nao precisa criar `Repository variables` ou `Environment variables` para o workflow funcionar.
+Voce precisa criar estes valores em cada repo consumidor.
 
-Voce precisa criar apenas estes `Repository secrets` em cada repo consumidor:
+`Repository variable`:
+
+- `SONAR_HOST_URL`: URL base do seu SonarQube, por exemplo `https://sonarqube.suaempresa.com`.
+- `SONAR_ORGANIZATION`: organization key do SonarCloud ou do ambiente Sonar usado pelo projeto.
+- `SONAR_PROJECT_KEY`: project key exato configurado no Sonar para aquele repositório.
+
+`Repository secrets`:
 
 - `ANTHROPIC_API_KEY`: token usado nas steps `doc-review`, `update-pr-summary` e `code-review-ai`.
 - `SONAR_TOKEN`: token usado na step de analise do SonarQube.
@@ -32,6 +38,21 @@ Se algum desses secrets nao existir:
 - `ANTHROPIC_API_KEY`: bloqueia `doc-review` e faz as steps nao bloqueantes de IA serem puladas.
 - `SONAR_TOKEN`: bloqueia a execucao da step de Sonar quando `enable-sonar: true`.
 - `SLACK_WEBHOOK_URL`: nao bloqueia o pipeline, apenas pula a notificacao de Slack.
+
+Se `SONAR_HOST_URL` nao existir, a step de Sonar falha cedo com mensagem explicita. Sem essa configuracao, o scanner tende a assumir `http://localhost:9000`.
+Se `SONAR_ORGANIZATION` ou `SONAR_PROJECT_KEY` nao existirem, a step de Sonar tambem falha cedo com mensagem explicita.
+
+Para SonarCloud, voce normalmente encontra esses valores em `Project Information`:
+
+- `SONAR_HOST_URL`: `https://sonarcloud.io`
+- `SONAR_ORGANIZATION`: valor exibido como `Organization Key`
+- `SONAR_PROJECT_KEY`: valor exibido como `Project Key`
+
+No exemplo do seu `checkout-api`, pela tela enviada:
+
+- `SONAR_HOST_URL=https://sonarcloud.io`
+- `SONAR_ORGANIZATION=jeffersonpersonalsonar`
+- `SONAR_PROJECT_KEY=jrlcst_checkout-api`
 
 Referencia fixa do template usada nos repositórios consumidores:
 
@@ -60,7 +81,10 @@ jobs:
       java-version: '21'
       working-directory: .
       build-test-command: ./mvnw -B test
-      sonar-command: ./mvnw -B verify sonar:sonar -DskipTests=false -Dsonar.projectKey=checkout-api
+      sonar-command: ./mvnw -B verify sonar:sonar -DskipTests=false
+      sonar-host-url: ${{ vars.SONAR_HOST_URL }}
+      sonar-organization: ${{ vars.SONAR_ORGANIZATION }}
+      sonar-project-key: ${{ vars.SONAR_PROJECT_KEY }}
       ai-context-path: docs/ai-context.yaml
     secrets: inherit
 ```
