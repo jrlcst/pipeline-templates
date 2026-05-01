@@ -36,6 +36,7 @@ Voce precisa criar estes valores em cada repo consumidor.
 Configuracao adicional obrigatoria no SonarCloud:
 
 - Desabilitar `Automatic Analysis` no projeto quando a analise for executada pelo GitHub Actions via CI.
+- Configurar um `Quality Gate` compativel com a politica de bloqueio desejada, pois o workflow agora espera explicitamente o resultado do gate com `sonar.qualitygate.wait=true`.
 
 Se algum desses secrets nao existir:
 
@@ -68,6 +69,13 @@ Checklist completo para o `checkout-api` funcionar no GitHub:
 - `Repository secret` `ANTHROPIC_API_KEY=<token da Anthropic>`
 - `Repository secret` `SLACK_WEBHOOK_URL=<webhook do Slack>`
 - `Automatic Analysis` desabilitado no projeto `checkout-api` no SonarCloud
+- `Quality Gate` do SonarCloud configurado para falhar nas condicoes que voce quer bloquear no PR
+
+## Comportamento dos reviews automatizados
+
+- `Claude Doc Review` e gate bloqueante, mas agora tambem publica ou atualiza um comentario no PR com o resultado detalhado quando passar ou bloquear.
+- `Claude Code Review` continua nao bloqueante e publica ou atualiza um comentario separado no PR.
+- `SonarQube` pode continuar decorando o PR com comentarios inline, mas o bloqueio do job depende do status do `Quality Gate`, nao apenas da existencia de comentarios.
 
 Referencia fixa do template usada nos repositórios consumidores:
 

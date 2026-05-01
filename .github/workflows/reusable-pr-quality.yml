@@ -181,7 +181,9 @@ jobs:
           ${{ inputs.sonar-command }} \
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.organization="$SONAR_ORGANIZATION" \
-            -Dsonar.projectKey="$SONAR_PROJECT_KEY"
+            -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.timeout=300
 
   doc-review:
     name: Claude Doc Review
@@ -227,6 +229,8 @@ jobs:
           .pipeline-template/scripts/ci/collect-pr-context.sh
 
       - name: Run Claude doc review
+        id: doc_review
+        continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5
@@ -235,6 +239,83 @@ jobs:
           DOCS_DIR: ${{ inputs.working-directory }}/docs
         run: |
           python .pipeline-template/scripts/ci/run_claude_task.py doc-review
+
+      - name: Upsert PR comment with doc review
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- ai-doc-review -->';
+            const pull = context.payload.pull_request;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            if (!pull) {
+              core.info('Not a pull_request event. Skipping.');
+              return;
+            }
+
+            let review;
+            let statusLine;
+
+            if (fs.existsSync('.ai/doc-review.md')) {
+              review = fs.readFileSync('.ai/doc-review.md', 'utf8').trim();
+              statusLine = review.split(/\r?\n/, 1)[0].trim().toUpperCase();
+            } else {
+              statusLine = 'BLOCK';
+              review = [
+                'BLOCK',
+                '',
+                '## Analise',
+                '- O job de doc review falhou antes de gerar a saída detalhada.',
+                `- Consulte o run do workflow para detalhes: ${runUrl}`,
+                '',
+                '## Arquivos documentais esperados',
+                '- Não foi possível determinar automaticamente porque a saída estruturada não foi gerada.',
+              ].join('\n');
+            }
+
+            const icon = statusLine.startsWith('PASS') ? '✅' : '❌';
+            const title = `${icon} Claude Doc Review: ${statusLine.startsWith('PASS') ? 'PASS' : 'BLOCK'}`;
+            const body = `${marker}\n${title}\n\n_Run:_ ${runUrl}\n\n${review}`;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pull.number,
+            });
+
+            const existing = comments.find(comment => comment.body && comment.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pull.number,
+                body,
+              });
+            }
+
+      - name: Fail when doc review blocks
+        if: ${{ always() }}
+        run: |
+          if [[ ! -f .ai/doc-review.md ]]; then
+            echo "Doc review output was not generated" >&2
+            exit 1
+          fi
+
+          first_line="$(head -n 1 .ai/doc-review.md | tr -d '\r')"
+          if [[ "$first_line" == BLOCK* ]]; then
+            echo "Claude doc review blocked this PR" >&2
+            exit 1
+          fi
 
   update-pr-summary:
     name: Update PR Summary
@@ -427,8 +508,11 @@ jobs:
         if: ${{ env.SLACK_WEBHOOK_URL != '' }}
         env:
           REPOSITORY: ${{ github.repository }}
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
-          payload="$(python3 -c 'import json, os; print(json.dumps({"text": "PR pronto para revisão após gates bloqueantes passarem.", "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": f"*PR pronto para revisão*\\nRepositório: {os.environ["REPOSITORY"]}\\nTítulo: {os.environ["PR_TITLE"]}\\n{os.environ["PR_URL"]}"}}]}))')"
+          payload="$(python3 -c 'import json, os; print(json.dumps({"text": f"PR pendente para revisão: {os.environ["REPOSITORY_NAME"]}", "blocks": [{"type": "header", "text": {"type": "plain_text", "text": "PR pendente para revisão"}}, {"type": "section", "fields": [{"type": "mrkdwn", "text": f"*Autor:*\n{os.environ["PR_AUTHOR"]}"}, {"type": "mrkdwn", "text": f"*API:*\n{os.environ["REPOSITORY_NAME"]}"}, {"type": "mrkdwn", "text": f"*Título:*\n{os.environ["PR_TITLE"]}"}, {"type": "mrkdwn", "text": f"*Branch:*\n{os.environ["PR_BRANCH"]}"}]}, {"type": "section", "text": {"type": "mrkdwn", "text": f"*Link PR:*\n<{os.environ["PR_URL"]}|Abrir pull request>"}}]}))')"
           curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
