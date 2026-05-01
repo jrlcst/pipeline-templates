@@ -210,6 +210,8 @@ jobs:
     needs: doc-review
     runs-on: ubuntu-latest
     continue-on-error: true
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -229,11 +231,11 @@ jobs:
           python-version: '3.12'
 
       - name: Skip when secret is missing
-        if: ${{ secrets.ANTHROPIC_API_KEY == '' }}
+        if: ${{ env.ANTHROPIC_API_KEY == '' }}
         run: echo "ANTHROPIC_API_KEY not configured; skipping PR summary"
 
       - name: Prepare PR context
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
         env:
           BASE_REF: ${{ inputs.base-ref }}
           WORKING_DIRECTORY: ${{ inputs.working-directory }}
@@ -242,9 +244,8 @@ jobs:
           .pipeline-template/scripts/ci/collect-pr-context.sh
 
       - name: Generate PR summary with Claude
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5
           AI_CONTEXT_PATH: ${{ inputs.working-directory }}/${{ inputs.ai-context-path }}
           MAX_DIFF_CHARS: '30000'
@@ -252,7 +253,7 @@ jobs:
           python .pipeline-template/scripts/ci/generate-pr-summary.py
 
       - name: Update PR body
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -291,6 +292,8 @@ jobs:
     needs: doc-review
     runs-on: ubuntu-latest
     continue-on-error: true
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -310,11 +313,11 @@ jobs:
           python-version: '3.12'
 
       - name: Skip when secret is missing
-        if: ${{ secrets.ANTHROPIC_API_KEY == '' }}
+        if: ${{ env.ANTHROPIC_API_KEY == '' }}
         run: echo "ANTHROPIC_API_KEY not configured; skipping code review"
 
       - name: Prepare PR context
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
         env:
           BASE_REF: ${{ inputs.base-ref }}
           WORKING_DIRECTORY: ${{ inputs.working-directory }}
@@ -323,9 +326,8 @@ jobs:
           .pipeline-template/scripts/ci/collect-pr-context.sh
 
       - name: Run Claude code review
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-haiku-4-5
           AI_CONTEXT_PATH: ${{ inputs.working-directory }}/${{ inputs.ai-context-path }}
           README_PATH: ${{ inputs.working-directory }}/README.md
@@ -334,7 +336,7 @@ jobs:
           python .pipeline-template/scripts/ci/run_claude_task.py code-review
 
       - name: Upsert PR comment with code review
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -382,15 +384,16 @@ jobs:
       - sonar
       - doc-review
     runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
       - name: Skip when secret is missing
-        if: ${{ secrets.SLACK_WEBHOOK_URL == '' }}
+        if: ${{ env.SLACK_WEBHOOK_URL == '' }}
         run: echo "SLACK_WEBHOOK_URL not configured; skipping Slack notification"
 
       - name: Send Slack notification
-        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           REPOSITORY: ${{ github.repository }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
