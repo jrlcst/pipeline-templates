@@ -17,6 +17,27 @@ Estes secrets devem ser configurados no repositório consumidor e repassados ao 
 - `SONAR_TOKEN`
 - `SLACK_WEBHOOK_URL`
 
+## Variáveis e secrets para criar no GitHub
+
+No modelo atual, voce nao precisa criar `Repository variables` ou `Environment variables` para o workflow funcionar.
+
+Voce precisa criar apenas estes `Repository secrets` em cada repo consumidor:
+
+- `ANTHROPIC_API_KEY`: token usado nas steps `doc-review`, `update-pr-summary` e `code-review-ai`.
+- `SONAR_TOKEN`: token usado na step de analise do SonarQube.
+- `SLACK_WEBHOOK_URL`: webhook usado na notificacao final de Slack depois dos gates bloqueantes.
+
+Se algum desses secrets nao existir:
+
+- `ANTHROPIC_API_KEY`: bloqueia `doc-review` e faz as steps nao bloqueantes de IA serem puladas.
+- `SONAR_TOKEN`: bloqueia a execucao da step de Sonar quando `enable-sonar: true`.
+- `SLACK_WEBHOOK_URL`: nao bloqueia o pipeline, apenas pula a notificacao de Slack.
+
+Referencia fixa do template usada nos repositórios consumidores:
+
+- Repositório: `jrlcst/pipeline-templates`
+- Workflow: `jrlcst/pipeline-templates/.github/workflows/reusable-pr-quality.yml@main`
+
 ## Exemplo de uso no repositório consumidor
 
 ```yaml
@@ -31,9 +52,9 @@ on:
 
 jobs:
   pr-quality:
-    uses: your-org/pipeline-templates/.github/workflows/reusable-pr-quality.yml@main
+    uses: jrlcst/pipeline-templates/.github/workflows/reusable-pr-quality.yml@main
     with:
-      template-repository: your-org/pipeline-templates
+      template-repository: jrlcst/pipeline-templates
       template-ref: main
       language: java
       java-version: '21'
@@ -50,4 +71,4 @@ jobs:
 - A step `update-pr-summary` é não bloqueante e atualiza apenas um bloco delimitado na descrição do PR.
 - A step `doc-review` é bloqueante.
 - A step `code-review-ai` é não bloqueante.
-- O Slack só é enviado depois que os gates bloqueantes passam.# pipeline-templates
+- O Slack só é enviado depois que os gates bloqueantes passam.

@@ -395,19 +395,5 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
-          payload=$(cat <<'JSON'
-          {
-            "text": "PR pronto para revisão após gates bloqueantes passarem.",
-            "blocks": [
-              {
-                "type": "section",
-                "text": {
-                  "type": "mrkdwn",
-                  "text": "*PR pronto para revisão*\nRepositório: ${REPOSITORY}\nTítulo: ${PR_TITLE}\n${PR_URL}"
-                }
-              }
-            ]
-          }
-JSON
-          )
+          payload="$(python3 -c 'import json, os; print(json.dumps({"text": "PR pronto para revisão após gates bloqueantes passarem.", "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": f"*PR pronto para revisão*\\nRepositório: {os.environ["REPOSITORY"]}\\nTítulo: {os.environ["PR_TITLE"]}\\n{os.environ["PR_URL"]}"}}]}))')"
           curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
