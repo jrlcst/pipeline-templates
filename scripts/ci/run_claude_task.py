@@ -22,6 +22,26 @@ OUTPUT_MAP = {
     "doc-review": Path(".ai/doc-review.md"),
 }
 
+DOC_REVIEW_BLOCK_HINTS = (
+    "desatualiz",
+    "nao foi atualizado",
+    "não foi atualizado",
+    "nao foram atualizados",
+    "não foram atualizados",
+    "deveria ser",
+    "deveria estar",
+    "deveria refletir",
+    "deveria atualizar",
+    "considerar atualizar",
+    "faltou atualizar",
+    "contradiz",
+    "incoerente",
+    "nao especifica",
+    "não especifica",
+    "ponto de atencao",
+    "ponto de atenção",
+)
+
 
 def fail(message: str, exit_code: int = 1) -> None:
     print(message, file=sys.stderr)
@@ -79,6 +99,21 @@ def call_anthropic(prompt: str) -> str:
         if item.get("type") == "text":
             text_parts.append(item.get("text", ""))
     return "\n".join(text_parts).strip()
+
+
+def should_force_doc_review_block(output: str) -> bool:
+    lines = output.splitlines()
+    if not lines:
+        return False
+
+    first_line = lines[0].strip().upper()
+    if first_line.startswith("BLOCK"):
+        return False
+    if not first_line.startswith("PASS"):
+        return False
+
+    normalized = output.casefold()
+    return any(hint in normalized for hint in DOC_REVIEW_BLOCK_HINTS)
 
 
 if MODE not in OUTPUT_MAP:
@@ -163,6 +198,12 @@ Para mudancas de pipeline, CI, quality gates, Sonar, Trivy, variaveis, secrets o
 - BLOCK apenas se README, docs/contexts, docs/ai-context.yaml ou skills locais nao refletirem o novo contrato/configuracao quando isso for relevante para o servico.
 - PASS quando a documentacao refletir corretamente workflow, variaveis, secrets, pre-condicoes externas e impacto documental.
 
+Regras adicionais obrigatorias:
+- Testes, nomes de constantes, nomes de metodos, nomes de classes e o proprio codigo NAO contam como documentacao.
+- Se README, docs/flows, docs/contexts ou docs/ai-context.yaml contiverem regra antiga, contraditoria ou incompleta em relacao ao diff, isso e BLOCK.
+- Se voce identificar qualquer arquivo documental desatualizado, contraditorio, incompleto ou que "deveria ser atualizado", a resposta final deve ser BLOCK, nunca PASS.
+- Nao use `PASS com ponto de atencao` quando o ponto de atencao for documentacao incoerente com o codigo.
+
 Nao bloqueie quando:
 - a mudanca e so teste
 - a mudanca e refatoracao interna sem impacto externo
@@ -217,6 +258,9 @@ except Exception as error:
 
 if not output:
     fail("Claude returned an empty response")
+
+if MODE == "doc-review" and should_force_doc_review_block(output):
+    output = "BLOCK\n\n## Analise\n- A resposta original do doc review marcou PASS, mas descreveu documentacao desatualizada, contraditoria ou que deveria ser atualizada.\n- O gate converteu automaticamente para BLOCK para manter a regra: mudanca relevante com documentacao incoerente deve bloquear.\n\n## Arquivos documentais esperados\n- Revise README.md, docs/**, docs/ai-context.yaml e skills locais conforme os pontos descritos na propria analise gerada.\n\n## Resposta original do modelo\n" + output
 
 output_path = OUTPUT_MAP[MODE]
 output_path.parent.mkdir(parents=True, exist_ok=True)
