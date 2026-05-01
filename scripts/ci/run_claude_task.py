@@ -42,6 +42,16 @@ DOC_REVIEW_BLOCK_HINTS = (
     "ponto de atenção",
 )
 
+DOC_REVIEW_SAFE_PASS_HINTS = (
+    "diff vazio",
+    "nao contem alteracoes",
+    "não contém alterações",
+    "nao ha mudancas",
+    "não há mudanças",
+    "nenhuma mudanca foi introduzida",
+    "nenhum arquivo documental precisa ser atualizado",
+)
+
 
 def fail(message: str, exit_code: int = 1) -> None:
     print(message, file=sys.stderr)
@@ -101,7 +111,7 @@ def call_anthropic(prompt: str) -> str:
     return "\n".join(text_parts).strip()
 
 
-def should_force_doc_review_block(output: str) -> bool:
+def should_force_doc_review_block(output: str, changed_files: str, diff: str) -> bool:
     lines = output.splitlines()
     if not lines:
         return False
@@ -112,7 +122,13 @@ def should_force_doc_review_block(output: str) -> bool:
     if not first_line.startswith("PASS"):
         return False
 
+    if not changed_files.strip() and not diff.strip():
+        return False
+
     normalized = output.casefold()
+    if any(hint in normalized for hint in DOC_REVIEW_SAFE_PASS_HINTS):
+        return False
+
     return any(hint in normalized for hint in DOC_REVIEW_BLOCK_HINTS)
 
 
@@ -259,7 +275,7 @@ except Exception as error:
 if not output:
     fail("Claude returned an empty response")
 
-if MODE == "doc-review" and should_force_doc_review_block(output):
+if MODE == "doc-review" and should_force_doc_review_block(output, changed_files, diff):
     output = "BLOCK\n\n## Analise\n- A resposta original do doc review marcou PASS, mas descreveu documentacao desatualizada, contraditoria ou que deveria ser atualizada.\n- O gate converteu automaticamente para BLOCK para manter a regra: mudanca relevante com documentacao incoerente deve bloquear.\n\n## Arquivos documentais esperados\n- Revise README.md, docs/**, docs/ai-context.yaml e skills locais conforme os pontos descritos na propria analise gerada.\n\n## Resposta original do modelo\n" + output
 
 output_path = OUTPUT_MAP[MODE]

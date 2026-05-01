@@ -277,7 +277,8 @@ jobs:
 
             const icon = statusLine.startsWith('PASS') ? '✅' : '❌';
             const title = `${icon} Claude Doc Review: ${statusLine.startsWith('PASS') ? 'PASS' : 'BLOCK'}`;
-            const body = `${marker}\n${title}\n\n_Run:_ ${runUrl}\n\n${review}`;
+            const reviewBody = review.split(/\r?\n/).slice(1).join('\n').trim();
+            const body = `${marker}\n${title}\n\n_Run:_ ${runUrl}${reviewBody ? `\n\n${reviewBody}` : ''}`;
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
