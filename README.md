@@ -33,6 +33,10 @@ Voce precisa criar estes valores em cada repo consumidor.
 - `SONAR_TOKEN`: token usado na step de analise do SonarQube.
 - `SLACK_WEBHOOK_URL`: webhook usado na notificacao final de Slack depois dos gates bloqueantes.
 
+Configuracao adicional obrigatoria no SonarCloud:
+
+- Desabilitar `Automatic Analysis` no projeto quando a analise for executada pelo GitHub Actions via CI.
+
 Se algum desses secrets nao existir:
 
 - `ANTHROPIC_API_KEY`: bloqueia `doc-review` e faz as steps nao bloqueantes de IA serem puladas.
@@ -41,6 +45,7 @@ Se algum desses secrets nao existir:
 
 Se `SONAR_HOST_URL` nao existir, a step de Sonar falha cedo com mensagem explicita. Sem essa configuracao, o scanner tende a assumir `http://localhost:9000`.
 Se `SONAR_ORGANIZATION` ou `SONAR_PROJECT_KEY` nao existirem, a step de Sonar tambem falha cedo com mensagem explicita.
+Se `Automatic Analysis` continuar habilitado no SonarCloud, a analise por CI falha com a mensagem `You are running CI analysis while Automatic Analysis is enabled`.
 
 Para SonarCloud, voce normalmente encontra esses valores em `Project Information`:
 
@@ -53,6 +58,16 @@ No exemplo do seu `checkout-api`, pela tela enviada:
 - `SONAR_HOST_URL=https://sonarcloud.io`
 - `SONAR_ORGANIZATION=jeffersonpersonalsonar`
 - `SONAR_PROJECT_KEY=jrlcst_checkout-api`
+
+Checklist completo para o `checkout-api` funcionar no GitHub:
+
+- `Repository variable` `SONAR_HOST_URL=https://sonarcloud.io`
+- `Repository variable` `SONAR_ORGANIZATION=jeffersonpersonalsonar`
+- `Repository variable` `SONAR_PROJECT_KEY=jrlcst_checkout-api`
+- `Repository secret` `SONAR_TOKEN=<token do SonarCloud>`
+- `Repository secret` `ANTHROPIC_API_KEY=<token da Anthropic>`
+- `Repository secret` `SLACK_WEBHOOK_URL=<webhook do Slack>`
+- `Automatic Analysis` desabilitado no projeto `checkout-api` no SonarCloud
 
 Referencia fixa do template usada nos repositórios consumidores:
 
