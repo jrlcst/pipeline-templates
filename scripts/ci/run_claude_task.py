@@ -22,35 +22,47 @@ OUTPUT_MAP = {
     "doc-review": Path(".ai/doc-review.md"),
 }
 
-DOC_REVIEW_BLOCK_HINTS = (
-    "desatualiz",
-    "nao foi atualizado",
-    "não foi atualizado",
-    "nao foram atualizados",
-    "não foram atualizados",
-    "deveria ser",
-    "deveria estar",
-    "deveria refletir",
-    "deveria atualizar",
-    "considerar atualizar",
-    "faltou atualizar",
-    "contradiz",
-    "incoerente",
-    "nao especifica",
-    "não especifica",
-    "ponto de atencao",
-    "ponto de atenção",
-)
-
-DOC_REVIEW_SAFE_PASS_HINTS = (
-    "diff vazio",
-    "nao contem alteracoes",
-    "não contém alterações",
-    "nao ha mudancas",
-    "não há mudanças",
-    "nenhuma mudanca foi introduzida",
-    "nenhum arquivo documental precisa ser atualizado",
-)
+DOC_REVIEW_TOOL_NAME = "submit_doc_review"
+DOC_REVIEW_TOOL_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "decision": {
+            "type": "string",
+            "enum": ["PASS", "BLOCK"],
+        },
+        "summary": {
+            "type": "string",
+        },
+        "relevant_change": {
+            "type": "boolean",
+        },
+        "documentation_coherent": {
+            "type": "boolean",
+        },
+        "analysis_points": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "expected_document_files": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "attention_points": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": [
+        "decision",
+        "summary",
+        "relevant_change",
+        "documentation_coherent",
+        "analysis_points",
+        "expected_document_files",
+        "attention_points",
+    ],
+}
 
 
 def fail(message: str, exit_code: int = 1) -> None:
@@ -111,25 +123,78 @@ def call_anthropic(prompt: str) -> str:
     return "\n".join(text_parts).strip()
 
 
-def should_force_doc_review_block(output: str, changed_files: str, diff: str) -> bool:
-    lines = output.splitlines()
-    if not lines:
-        return False
+def call_anthropic_tool(prompt: str, tool_name: str, tool_description: str, schema: dict) -> dict:
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": 1200,
+        "temperature": 0,
+        "messages": [{"role": "user", "content": prompt}],
+        "tools": [
+            {
+                "name": tool_name,
+                "description": tool_description,
+                "input_schema": schema,
+                "strict": True,
+            }
+        ],
+        "tool_choice": {
+            "type": "tool",
+            "name": tool_name,
+            "disable_parallel_tool_use": True,
+        },
+    }
+    request = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "content-type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
 
-    first_line = lines[0].strip().upper()
-    if first_line.startswith("BLOCK"):
-        return False
-    if not first_line.startswith("PASS"):
-        return False
+    with urllib.request.urlopen(request, timeout=60) as response:
+        result = json.loads(response.read().decode("utf-8"))
 
-    if not changed_files.strip() and not diff.strip():
-        return False
+    for item in result.get("content", []):
+        if item.get("type") == "tool_use" and item.get("name") == tool_name:
+            return item.get("input", {})
 
-    normalized = output.casefold()
-    if any(hint in normalized for hint in DOC_REVIEW_SAFE_PASS_HINTS):
-        return False
+    fail(f"Claude did not return the expected tool call: {tool_name}")
 
-    return any(hint in normalized for hint in DOC_REVIEW_BLOCK_HINTS)
+
+def render_doc_review(result: dict) -> str:
+    decision = result["decision"].strip().upper()
+    sections = [decision, "", "## Analise"]
+    sections.append(f"- {result['summary']}")
+    sections.append(
+        "- Mudanca relevante identificada: {}".format(
+            "sim" if result["relevant_change"] else "nao"
+        )
+    )
+    sections.append(
+        "- Documentacao coerente com o diff: {}".format(
+            "sim" if result["documentation_coherent"] else "nao"
+        )
+    )
+
+    for point in result["analysis_points"]:
+        sections.append(f"- {point}")
+
+    sections.extend(["", "## Arquivos documentais esperados"])
+    if result["expected_document_files"]:
+        for item in result["expected_document_files"]:
+            sections.append(f"- {item}")
+    else:
+        sections.append("- Nenhum arquivo documental adicional precisa ser atualizado.")
+
+    if result["attention_points"]:
+        sections.extend(["", "## Pontos de atencao"])
+        for item in result["attention_points"]:
+            sections.append(f"- {item}")
+
+    return "\n".join(sections).strip()
 
 
 if MODE not in OUTPUT_MAP:
@@ -229,17 +294,20 @@ Nao bloqueie quando:
 
 Formato obrigatorio:
 
-PASS ou BLOCK na primeira linha.
+Retorne sua decisao exclusivamente chamando a ferramenta `{DOC_REVIEW_TOOL_NAME}`.
 
-Depois:
+Regras de preenchimento da ferramenta:
+- `decision`: `PASS` ou `BLOCK`
+- `summary`: uma frase objetiva com a conclusao final
+- `relevant_change`: `true` quando o diff muda comportamento, contrato, configuracao, integracao ou fluxo relevante
+- `documentation_coherent`: `true` somente quando README, docs, ai-context e skills relevantes estao coerentes com o diff
+- `analysis_points`: lista curta, objetiva e verificavel dos motivos principais
+- `expected_document_files`: liste os arquivos documentais que deveriam ser atualizados; deixe vazio quando nao houver pendencia
+- `attention_points`: use apenas para riscos residuais ou observacoes nao bloqueantes
 
-## Analise
-- ...
-
-## Arquivos documentais esperados
-- ...
-
-Se a conclusao for PASS com documentacao coerente, deixe isso explicito logo no inicio da analise.
+Se a mudanca for relevante e a documentacao estiver coerente, retorne `decision=PASS`.
+Se o diff estiver vazio ou nao houver alteracao relevante, retorne `decision=PASS` e `expected_document_files=[]`.
+Nao escreva texto fora da ferramenta.
 
 Contexto do servico:
 ```yaml
@@ -268,15 +336,21 @@ Diff:
 """.strip()
 
 try:
-    output = call_anthropic(prompt)
+    if MODE == "doc-review":
+        structured_result = call_anthropic_tool(
+            prompt,
+            DOC_REVIEW_TOOL_NAME,
+            "Return the final doc review decision and supporting fields with strict schema conformance.",
+            DOC_REVIEW_TOOL_SCHEMA,
+        )
+        output = render_doc_review(structured_result)
+    else:
+        output = call_anthropic(prompt)
 except Exception as error:
     fail(f"Failed to call Anthropic API: {error}")
 
 if not output:
     fail("Claude returned an empty response")
-
-if MODE == "doc-review" and should_force_doc_review_block(output, changed_files, diff):
-    output = "BLOCK\n\n## Analise\n- A resposta original do doc review marcou PASS, mas descreveu documentacao desatualizada, contraditoria ou que deveria ser atualizada.\n- O gate converteu automaticamente para BLOCK para manter a regra: mudanca relevante com documentacao incoerente deve bloquear.\n\n## Arquivos documentais esperados\n- Revise README.md, docs/**, docs/ai-context.yaml e skills locais conforme os pontos descritos na propria analise gerada.\n\n## Resposta original do modelo\n" + output
 
 output_path = OUTPUT_MAP[MODE]
 output_path.parent.mkdir(parents=True, exist_ok=True)
