@@ -1,0 +1,413 @@
+name: Reusable PR Quality
+
+on:
+  workflow_call:
+    inputs:
+      template-repository:
+        required: true
+        type: string
+      template-ref:
+        required: false
+        type: string
+        default: main
+      language:
+        required: false
+        type: string
+        default: java
+      java-version:
+        required: false
+        type: string
+        default: '21'
+      working-directory:
+        required: false
+        type: string
+        default: .
+      build-test-command:
+        required: false
+        type: string
+        default: ./mvnw -B test
+      sonar-command:
+        required: false
+        type: string
+        default: ./mvnw -B verify sonar:sonar -DskipTests=false
+      ai-context-path:
+        required: false
+        type: string
+        default: docs/ai-context.yaml
+      base-ref:
+        required: false
+        type: string
+        default: main
+      enable-trivy:
+        required: false
+        type: boolean
+        default: true
+      enable-sonar:
+        required: false
+        type: boolean
+        default: true
+      enable-doc-review:
+        required: false
+        type: boolean
+        default: true
+      enable-pr-summary:
+        required: false
+        type: boolean
+        default: true
+      enable-code-review:
+        required: false
+        type: boolean
+        default: true
+      enable-slack:
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      SONAR_TOKEN:
+        required: false
+      SLACK_WEBHOOK_URL:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        if: ${{ inputs.language == 'java' || inputs.language == 'kotlin' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+
+      - name: Run build and tests
+        working-directory: ${{ inputs.working-directory }}
+        run: ${{ inputs.build-test-command }}
+
+  trivy:
+    name: Trivy
+    if: ${{ inputs.enable-trivy }}
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.working-directory }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          format: table
+
+  sonar:
+    name: SonarQube
+    if: ${{ inputs.enable-sonar }}
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        if: ${{ inputs.language == 'java' || inputs.language == 'kotlin' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: maven
+
+      - name: Validate Sonar secret
+        run: |
+          if [[ -z "${SONAR_TOKEN:-}" ]]; then
+            echo "SONAR_TOKEN is required when enable-sonar=true" >&2
+            exit 1
+          fi
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Run SonarQube analysis
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: ${{ inputs.sonar-command }}
+
+  doc-review:
+    name: Claude Doc Review
+    if: ${{ inputs.enable-doc-review }}
+    needs:
+      - build-test
+      - trivy
+      - sonar
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout pipeline template repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.template-repository }}
+          ref: ${{ inputs.template-ref }}
+          path: .pipeline-template
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate Anthropic secret
+        run: |
+          if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+            echo "ANTHROPIC_API_KEY is required when enable-doc-review=true" >&2
+            exit 1
+          fi
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Prepare PR context
+        env:
+          BASE_REF: ${{ inputs.base-ref }}
+          WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        run: |
+          chmod +x .pipeline-template/scripts/ci/collect-pr-context.sh
+          .pipeline-template/scripts/ci/collect-pr-context.sh
+
+      - name: Run Claude doc review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5
+          AI_CONTEXT_PATH: ${{ inputs.working-directory }}/${{ inputs.ai-context-path }}
+          README_PATH: ${{ inputs.working-directory }}/README.md
+          DOCS_DIR: ${{ inputs.working-directory }}/docs
+        run: |
+          python .pipeline-template/scripts/ci/run_claude_task.py doc-review
+
+  update-pr-summary:
+    name: Update PR Summary
+    if: ${{ inputs.enable-pr-summary }}
+    needs: doc-review
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout pipeline template repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.template-repository }}
+          ref: ${{ inputs.template-ref }}
+          path: .pipeline-template
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Skip when secret is missing
+        if: ${{ secrets.ANTHROPIC_API_KEY == '' }}
+        run: echo "ANTHROPIC_API_KEY not configured; skipping PR summary"
+
+      - name: Prepare PR context
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        env:
+          BASE_REF: ${{ inputs.base-ref }}
+          WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        run: |
+          chmod +x .pipeline-template/scripts/ci/collect-pr-context.sh
+          .pipeline-template/scripts/ci/collect-pr-context.sh
+
+      - name: Generate PR summary with Claude
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5
+          AI_CONTEXT_PATH: ${{ inputs.working-directory }}/${{ inputs.ai-context-path }}
+          MAX_DIFF_CHARS: '30000'
+        run: |
+          python .pipeline-template/scripts/ci/generate-pr-summary.py
+
+      - name: Update PR body
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('.ai/pr-summary.md', 'utf8').trim();
+            const markerStart = '<!-- ai-pr-summary:start -->';
+            const markerEnd = '<!-- ai-pr-summary:end -->';
+            const generatedBlock = `${markerStart}\n${summary}\n${markerEnd}`;
+            const pull = context.payload.pull_request;
+
+            if (!pull) {
+              core.info('Not a pull_request event. Skipping.');
+              return;
+            }
+
+            const currentBody = pull.body || '';
+            let nextBody;
+
+            if (currentBody.includes(markerStart) && currentBody.includes(markerEnd)) {
+              const pattern = new RegExp(`${markerStart}[\\s\\S]*?${markerEnd}`, 'm');
+              nextBody = currentBody.replace(pattern, generatedBlock);
+            } else {
+              nextBody = `${generatedBlock}\n\n---\n\n${currentBody}`.trim();
+            }
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pull.number,
+              body: nextBody,
+            });
+
+  code-review-ai:
+    name: Claude Code Review
+    if: ${{ inputs.enable-code-review }}
+    needs: doc-review
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout pipeline template repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.template-repository }}
+          ref: ${{ inputs.template-ref }}
+          path: .pipeline-template
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Skip when secret is missing
+        if: ${{ secrets.ANTHROPIC_API_KEY == '' }}
+        run: echo "ANTHROPIC_API_KEY not configured; skipping code review"
+
+      - name: Prepare PR context
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        env:
+          BASE_REF: ${{ inputs.base-ref }}
+          WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        run: |
+          chmod +x .pipeline-template/scripts/ci/collect-pr-context.sh
+          .pipeline-template/scripts/ci/collect-pr-context.sh
+
+      - name: Run Claude code review
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-haiku-4-5
+          AI_CONTEXT_PATH: ${{ inputs.working-directory }}/${{ inputs.ai-context-path }}
+          README_PATH: ${{ inputs.working-directory }}/README.md
+          DOCS_DIR: ${{ inputs.working-directory }}/docs
+        run: |
+          python .pipeline-template/scripts/ci/run_claude_task.py code-review
+
+      - name: Upsert PR comment with code review
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const review = fs.readFileSync('.ai/code-review.md', 'utf8').trim();
+            const marker = '<!-- ai-code-review -->';
+            const body = `${marker}\n${review}`;
+            const pull = context.payload.pull_request;
+
+            if (!pull) {
+              core.info('Not a pull_request event. Skipping.');
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pull.number,
+            });
+
+            const existing = comments.find(comment => comment.body && comment.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pull.number,
+                body,
+              });
+            }
+
+  slack:
+    name: Slack Notification
+    if: ${{ inputs.enable-slack }}
+    needs:
+      - build-test
+      - trivy
+      - sonar
+      - doc-review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip when secret is missing
+        if: ${{ secrets.SLACK_WEBHOOK_URL == '' }}
+        run: echo "SLACK_WEBHOOK_URL not configured; skipping Slack notification"
+
+      - name: Send Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPOSITORY: ${{ github.repository }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          payload=$(cat <<'JSON'
+          {
+            "text": "PR pronto para revisão após gates bloqueantes passarem.",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*PR pronto para revisão*\nRepositório: ${REPOSITORY}\nTítulo: ${PR_TITLE}\n${PR_URL}"
+                }
+              }
+            ]
+          }
+JSON
+          )
+          curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
