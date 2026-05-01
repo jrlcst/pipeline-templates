@@ -150,9 +150,18 @@ Voce esta fazendo doc review de um pull request.
 Use somente o contexto abaixo.
 Seu objetivo e decidir se a mudanca deve bloquear por documentacao desatualizada.
 
-Bloqueie quando:
+Bloqueie somente quando AS DUAS condicoes abaixo forem verdadeiras ao mesmo tempo:
 1. O diff altera endpoint, DTO, regra, integracao, contrato, configuracao ou fluxo relevante.
-2. README, docs ou docs/ai-context.yaml nao foram atualizados de forma coerente.
+2. README, docs, docs/ai-context.yaml ou skills locais de review nao foram atualizados de forma coerente quando isso era necessario.
+
+Se a mudanca for relevante mas a documentacao tiver sido atualizada de forma coerente, a resposta deve ser PASS.
+Mudanca relevante por si so nao e motivo para BLOCK.
+Nao use BLOCK apenas porque a mudanca merece atencao humana extra ou revisao mais cuidadosa.
+Nesse caso, responda PASS e cite os pontos de atencao em ## Analise.
+
+Para mudancas de pipeline, CI, quality gates, Sonar, Trivy, variaveis, secrets ou caller de workflow:
+- BLOCK apenas se README, docs/contexts, docs/ai-context.yaml ou skills locais nao refletirem o novo contrato/configuracao quando isso for relevante para o servico.
+- PASS quando a documentacao refletir corretamente workflow, variaveis, secrets, pre-condicoes externas e impacto documental.
 
 Nao bloqueie quando:
 - a mudanca e so teste
@@ -172,6 +181,8 @@ Depois:
 
 ## Arquivos documentais esperados
 - ...
+
+Se a conclusao for PASS com documentacao coerente, deixe isso explicito logo no inicio da analise.
 
 Contexto do servico:
 ```yaml
